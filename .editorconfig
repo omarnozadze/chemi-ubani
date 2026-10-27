@@ -1,0 +1,10 @@
+root = true
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+[*.{js,mjs,json,yml}]
+indent_style = space
+indent_size = 2
+[*.{cmd,bat,ps1}]
+end_of_line = crlf

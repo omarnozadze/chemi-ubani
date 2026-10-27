@@ -1,0 +1,55 @@
+// Run with PGLITE_MODULE pointing to an installed @electric-sql/pglite module.
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+const {PGlite}=await import(process.env.PGLITE_MODULE||'@electric-sql/pglite');
+const db=new PGlite();
+await db.exec(`
+create role anon; create role authenticated; create schema auth; create schema app_private;
+grant usage on schema app_private,auth to authenticated;
+create function auth.role() returns text language sql as $$select current_setting('test.role',true)$$;
+create function app_private.verified_phone() returns text language plpgsql as $$begin
+ if coalesce(current_setting('test.phone',true),'')='' then raise exception 'SMS verification required' using errcode='42501';end if;
+ return current_setting('test.phone',true);end$$;
+create table public.profiles(phone text primary key,district text,is_super_admin boolean default false);
+create table public.user_blocks(blocker_phone text,blocked_phone text);
+create table public.notifications(id uuid default gen_random_uuid(),recipient_phone text references profiles(phone),actor_phone text,kind text,title text,body text);
+create table public.direct_chat_threads(id uuid primary key,user_a text,user_b text);
+create table public.direct_chat_messages(id uuid primary key default gen_random_uuid(),thread_id uuid,sender_phone text);
+create table public.live_chat_members(chat_id uuid,phone text);
+create table public.live_chat_messages(id uuid default gen_random_uuid(),chat_id uuid,sender_phone text);
+create table public.daily_photo_friends(user_phone text,friend_phone text);
+create table public.daily_moments(id uuid default gen_random_uuid(),phone text,owner_confirmed_at timestamptz,caption text);
+create table public.my_day_friendships(requester_phone text,addressee_phone text,status text);
+create table public.my_day_posts(id uuid default gen_random_uuid(),owner_phone text);
+create table public.service_orders(id uuid default gen_random_uuid(),customer_phone text,provider_phone text,status text,updated_at timestamptz default now());
+insert into profiles values('a','ვაკე',true),('b','ვაკე',false),('c','ვაკე',false),('d','საბურთალო',false);
+`);
+await db.exec(fs.readFileSync(new URL('../supabase/notification-events.sql',import.meta.url),'utf8'));
+// Reapplication must not duplicate triggers or fail.
+await db.exec(fs.readFileSync(new URL('../supabase/notification-events.sql',import.meta.url),'utf8'));
+const count=async(kind)=>Number((await db.query('select count(*) n from notifications where kind=$1',[kind])).rows[0].n);
+const actor=async p=>{await db.query("select set_config('test.phone',$1,false)",[p]);};
+await actor('a');
+await db.exec(`insert into direct_chat_threads values('00000000-0000-0000-0000-000000000001','a','b');insert into direct_chat_messages(thread_id,sender_phone) values('00000000-0000-0000-0000-000000000001','a');`);
+assert.equal(await count('direct_message'),1);
+assert.equal((await db.query("select recipient_phone from notifications where kind='direct_message'")).rows[0].recipient_phone,'b');
+await db.exec(`insert into user_blocks values('b','a');insert into direct_chat_messages(thread_id,sender_phone) values('00000000-0000-0000-0000-000000000001','a');`);
+assert.equal(await count('direct_message'),1);await db.exec('delete from user_blocks');
+await actor('c');await db.exec(`insert into direct_chat_messages(thread_id,sender_phone) values('00000000-0000-0000-0000-000000000001','a');`);assert.equal(await count('direct_message'),1);
+await actor('');await db.exec(`insert into direct_chat_messages(thread_id,sender_phone) values('00000000-0000-0000-0000-000000000001','a');`);assert.equal(await count('direct_message'),1);
+await actor('a');
+await db.exec(`insert into live_chat_members values('00000000-0000-0000-0000-000000000002','a'),('00000000-0000-0000-0000-000000000002','b'),('00000000-0000-0000-0000-000000000002','c');insert into user_blocks values('c','a');insert into live_chat_messages(chat_id,sender_phone) values('00000000-0000-0000-0000-000000000002','a');`);assert.equal(await count('group_message'),1);await db.exec('delete from user_blocks');
+await db.exec(`insert into daily_photo_friends values('b','a'),('a','d');insert into daily_moments(phone,owner_confirmed_at) values('a',null);`);assert.equal(await count('daily_photo'),0);
+await db.exec("update daily_moments set owner_confirmed_at=now();update daily_moments set caption='edited';");assert.equal(await count('daily_photo'),1);
+assert.equal((await db.query("select recipient_phone from notifications where kind='daily_photo'")).rows[0].recipient_phone,'b');
+await db.exec(`insert into my_day_friendships values('a','b','accepted'),('a','c','pending');insert into my_day_posts(owner_phone) values('a');`);assert.equal(await count('daily_photo'),2);
+await db.exec(`insert into service_orders(customer_phone,provider_phone,status) values('a','b','consultation_requested');`);assert.equal(await count('service_order'),1);
+await actor('b');await db.exec("update service_orders set status='accepted';update service_orders set status='accepted';");assert.equal(await count('service_order_update'),1);
+await assert.rejects(db.query("select public.publish_hot_news('t','b','ტრენდი','ვაკე')"),/Administrator/);
+await actor('a');await db.query("select public.publish_hot_news('t','b','ტრენდი','ვაკე')");assert.equal(await count('hot_news'),2);
+await actor('d');assert.deepEqual((await db.query('select public.list_hot_news() data')).rows[0].data,[]);
+await actor('b');assert.equal((await db.query('select public.list_hot_news() data')).rows[0].data.length,1);
+assert.equal((await db.query("select has_function_privilege('anon','public.publish_hot_news(text,text,text,text)','execute') allowed")).rows[0].allowed,false);
+assert.equal((await db.query("select has_function_privilege('authenticated','app_private.emit_activity(text,text,text,text,text)','execute') allowed")).rows[0].allowed,false);
+console.log('PASS: SQL applies twice; direct/group recipients; block/self/actor checks; confirmed friends-only daily photos; no edit duplicates; specialist orders; admin-only district hot news; private function privileges.');
+await db.close();

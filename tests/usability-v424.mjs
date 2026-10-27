@@ -1,0 +1,22 @@
+const {JSDOM,VirtualConsole}=await import(process.env.JSDOM_MODULE||'jsdom');
+import fs from 'node:fs';import assert from 'node:assert/strict';
+const errors=[];const vc=new VirtualConsole();vc.on('jsdomError',e=>{if(e.type==='unhandled-exception')errors.push(e)});
+const html=fs.readFileSync('prototype-v4.24.1.html','utf8');
+const dom=new JSDOM(html,{url:'https://chemi-ubani.local/',runScripts:'dangerously',pretendToBeVisual:true,virtualConsole:vc,beforeParse(w){w.fetch=async()=>({ok:false,status:503,json:async()=>({}),text:async()=>''});w.Headers=Headers;w.alert=()=>{};w.confirm=()=>false;w.HTMLElement.prototype.scrollIntoView=function(){};w.navigator.geolocation={getCurrentPosition:(_,fail)=>fail()};}});
+const w=dom.window;await new Promise(r=>setTimeout(r,50));assert.equal(errors.length,0,errors.map(e=>e.message).join('\n'));
+const calls=[];w.testRPC=async(name,args)=>{calls.push({name,args});return {ok:true,data:[]}};
+w.eval("st.phone='511111111';sbRpc=(name,args)=>window.testRPC(name,args);refreshMessagingBadge=()=>{};refreshCloudNotificationBadge=()=>{};");
+const id='11111111-1111-4111-8111-111111111111',note='33333333-3333-4333-8333-333333333333';
+let route;
+w.testRPC=async(name,args)=>name==='resolve_notification'?{ok:true,data:route}:{ok:true,data:[]};
+route={screen:'chat',kind:'direct',id,other:{phone:'522222222',name:'Friend'}};
+await w.openActivity(note);assert.equal(w.eval('currentDirectThreadId'),id);assert.equal(w.document.getElementById('chatTitle').textContent,'Friend');
+route={screen:'chat',kind:'group',id,name:'Group'};await w.openActivity(note);assert.equal(w.eval('currentCloudChatId'),id);assert.equal(w.eval('currentDirectThreadId'),'');
+let attempts=[];let fail=true;
+w.testRPC=async(name,args)=>{if(name==='send_chat_message_verified'){attempts.push(args);return fail?{ok:false,error:'Offline'}:{ok:true,data:{ok:true}}}return {ok:true,data:[]}};
+w.document.getElementById('mi').value='hello';await w.eval('send()');assert.equal(w.document.getElementById('mi').value,'');assert.match(w.document.querySelector('.pendingMessage').textContent,/hello/);assert.match(w.document.querySelector('.chatDelivery').textContent,/ხელახლა გაგზავნა/);
+fail=false;w.document.querySelector('.pendingMessage button').click();await new Promise(r=>setTimeout(r,10));assert.equal(attempts.length,2);assert.equal(attempts[0].p_client_id,attempts[1].p_client_id);assert.equal(w.document.getElementById('mi').value,'');assert.equal(w.document.querySelector('.pendingMessage'),null);
+const guide=w.eval(`customerOrderActions({id:'${id}',status:'offer_sent'})`);assert.match(guide,/შემდეგი ნაბიჯი/);assert.match(guide,/დამკვეთმა/);
+let uploads=0;w.eval(''); // Upload compression uses browser canvas, device verification remains required.
+assert.equal(errors.length,0,errors.map(e=>e.message).join('\n'));
+console.log('PASS: complete HTML startup, exact direct/group routing, failed-send text preservation, stable retry ID, sent status, order guidance.');dom.window.close();

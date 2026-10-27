@@ -1,0 +1,35 @@
+const {PGlite}=await import(process.env.PGLITE_MODULE||'@electric-sql/pglite');
+import fs from 'node:fs';import assert from 'node:assert/strict';
+const db=new PGlite();
+await db.exec(`create role anon; create role authenticated; create schema app_private; create schema auth; grant usage on schema app_private to authenticated; set check_function_bodies=off;
+create function app_private.verified_phone() returns text language plpgsql as $$begin if nullif(current_setting('test.phone',true),'') is null then raise exception 'Login required' using errcode='42501';end if;return current_setting('test.phone');end$$;
+create function auth.uid() returns uuid language sql as $$select null::uuid$$;
+create function auth.jwt() returns jsonb language sql as $$select '{}'::jsonb$$;`);
+const cols=JSON.parse(fs.readFileSync('tests/fixtures/columns-snapshot.json'));
+for(const table of [...new Set(cols.map(c=>c.table_name))]){
+ const cs=cols.filter(c=>c.table_name===table).map(c=>`${c.column_name} ${c.udt_name==='_text'?'text[]':c.udt_name}${c.column_name==='id'?' default gen_random_uuid()':c.udt_name==='timestamptz'?' default now()':''}`);
+ await db.exec(`create table public.${table}(${cs});`);
+}
+await db.exec(`alter table public.direct_chat_reads add primary key(thread_id,phone);`);
+const rpcs=JSON.parse(fs.readFileSync('tests/fixtures/rpc-snapshot.json'));
+for(const r of rpcs)await db.exec(r.definition);
+await db.exec(fs.readFileSync('supabase/verified-api-v424.sql','utf8'));
+await db.exec(fs.readFileSync('supabase/app-features-v424.sql','utf8'));
+await db.exec('set check_function_bodies=on;');
+await db.exec(`alter table public.profiles add primary key(phone);alter table public.businesses add primary key(id);create function auth.role() returns text language sql as $$select 'authenticated'::text$$;`);
+await db.exec(fs.readFileSync('supabase/notification-events.sql','utf8'));
+for(const file of ['day-boundary','admin-campaigns','business-ratings'])await db.exec(fs.readFileSync('supabase/'+file+'-v4241.sql','utf8'));
+const visibility=async(c,n)=>(await db.query('select app_private.daily_visible_at($1,$2) v',[c,n])).rows[0].v;
+assert.equal(await visibility('2026-09-15T08:00Z','2026-09-15T19:58:59.999Z'),true);assert.equal(await visibility('2026-09-15T08:00Z','2026-09-15T19:59Z'),false);assert.equal(await visibility('2026-09-15T08:00Z','2026-09-15T20:00Z'),false);assert.equal(await visibility('2026-09-15T20:00Z','2026-09-15T20:00Z'),true);
+await db.exec(`insert into profiles(phone,full_name,city,district,neighborhood,is_super_admin,admin_level)values('511111111','Admin','თბილისი','ვაკე','ბაგები',true,'super'),('522222222','Peer','თბილისი','ვაკე','ბაგები',false,'user'),('533333333','Other','თბილისი','ვაკე','წყნეთი',false,'user'),('544444444','Elsewhere','ბათუმი','ვაკე','ბაგები',false,'user');select set_config('test.phone','511111111',false);insert into daily_moments(phone,back_image_url,front_image_url,created_at,owner_confirmed_at)values('511111111','https://example.com/a','https://example.com/b',now()-interval '2 days',now()-interval '2 days');`);
+await db.exec('set role authenticated');assert.equal((await db.query("select * from public.list_daily_moments('511111111')")).rows.length,0);assert.equal((await db.query("select * from public.list_my_daily_memories('511111111')")).rows.length,1);
+const payload={title:'Actual news',body:'Content',category:'მნიშვნელოვანი',placement:'ცხელი ამბები',city:'თბილისი',districts:['ვაკე'],neighborhood:'ბაგები',days:7,image:null};const request='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const publish=()=>db.query('select public.publish_admin_campaign($1,$2) r',[payload,request]);const first=(await publish()).rows[0].r;assert.equal(first.ok,true);assert.equal((await publish()).rows[0].r.id,first.id);
+await db.exec('reset role');assert.equal((await db.query('select count(*)::int n from admin_campaigns')).rows[0].n,1);const notes=(await db.query("select recipient_phone from notifications where kind='hot_news'")).rows;assert.deepEqual(notes,[{recipient_phone:'522222222'}]);
+await db.exec("select set_config('test.phone','522222222',false);set role authenticated");assert.equal((await db.query('select public.list_hot_news() r')).rows[0].r.length,1);await assert.rejects(publish,e=>e.code==='42501');await assert.rejects(()=>db.query("select public.update_admin_campaign($1,'paused')",[first.id]),e=>e.code==='42501');
+await db.exec("reset role;select set_config('test.phone','533333333',false);set role authenticated");assert.equal((await db.query('select public.list_hot_news() r')).rows[0].r.length,0);
+await db.exec("reset role;select set_config('test.phone','511111111',false);set role authenticated");await db.query("select public.update_admin_campaign($1,'paused')",[first.id]);assert.equal((await db.query('select public.list_hot_news() r')).rows[0].r.length,0);
+await db.exec("reset role;insert into businesses(id,owner_phone,name,status)values('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','511111111','Shop','approved');select set_config('test.phone','522222222',false);set role authenticated");
+await db.query("select public.rate_business('522222222','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',4,'Good')");await db.query("select public.rate_business('522222222','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',5,'Updated')");const rating=(await db.query('select public.list_business_rating_summaries() r')).rows[0].r[0];assert.equal(rating.rating_count,1);assert.equal(Number(rating.avg_rating),5);await assert.rejects(()=>db.query("select public.rate_business('533333333','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',4,null)"),e=>e.code==='42501');
+await db.exec("reset role;select set_config('test.phone','511111111',false);set role authenticated");await assert.rejects(()=>db.query("select public.rate_business('511111111','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',5,null)"),e=>e.code==='42501');await db.exec('reset role;set role anon');await assert.rejects(()=>db.query('select public.list_admin_campaigns()'),e=>e.code==='42501');
+console.log('PASS: Georgia cutoff and own history preserved; campaign server persistence/idempotency; neighborhood/city visibility and notifications; admin-only publishing/pausing; real ratings/update/no self-vote/no spoof/no anon.');await db.close();

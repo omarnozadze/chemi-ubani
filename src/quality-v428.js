@@ -1,0 +1,21 @@
+(()=>{
+ const el=id=>document.getElementById(id),button=(text,fn)=>{const b=document.createElement('button');b.className='small';b.textContent=text;b.onclick=fn;return b};
+ const screen=document.createElement('section');screen.id='privacySettings';screen.className='s hide app';const header=document.createElement('div');header.className='top';header.append(button('← უკან',()=>go('settings')));const title=document.createElement('h2');title.textContent='კონფიდენციალურობა';header.append(title);screen.append(header);
+ const label=document.createElement('label');label.textContent='ვინ გამოგიგზავნოს პირადი შეტყობინება';const select=document.createElement('select');select.className='inp';for(const[value,text]of [['everyone','ყველა'],['friends','მხოლოდ მეგობრები'],['nobody','არავინ']]){const option=document.createElement('option');option.value=value;option.textContent=text;select.append(option)}label.append(select);screen.append(label);
+ const status=document.createElement('p');status.setAttribute('role','status');let owner='',run=0;
+ const save=button('შენახვა',async()=>{if(owner!==st.phone)return;const phone=owner;save.disabled=true;try{const r=await sbRpc('set_privacy_preferences',{p_messages:select.value});if(phone!==st.phone)return;status.textContent=r.ok?'შენახულია.':'ვერ შეინახა. სცადე ხელახლა.'}finally{save.disabled=owner!==st.phone}});screen.append(save,status);document.querySelector('.phone').append(screen);el('settings').append(button('კონფიდენციალურობა',()=>go('privacySettings')));
+ async function load(){const phone=st.phone,id=++run;owner='';save.disabled=true;status.textContent='იტვირთება…';const r=await sbRpc('get_privacy_preferences',{});if(id!==run||phone!==st.phone)return;if(!r.ok){status.replaceChildren(document.createTextNode('პარამეტრები ვერ ჩაიტვირთა. '),button('ხელახლა ცდა',load));return}select.value=r.data.messages;owner=phone;save.disabled=false;status.textContent='შეზღუდვა ახალ პირად შეტყობინებებზე მოქმედებს. ჯგუფის მიმოწერა ცალკეა.'}
+ const summary=document.createElement('p');summary.setAttribute('role','status');el('pushDiagnostics').prepend(summary);
+ async function loadSummary(){const phone=st.phone;const r=await sbRpc('admin_delivery_summary',{});if(phone!==st.phone||!r.ok)return;const d=r.data,w=d.worker;summary.textContent=`რიგში: ${d.waiting} • შეცდომა (24 სთ): ${d.failed} • გაურკვეველი: ${d.unknown}`+(w?.last_tick?` • ბოლო შემოწმება: ${formatCloudDate(w.last_tick)}`:' • ავტომატური შემოწმება ჯერ არ დაფიქსირებულა.')+(w?.error?' • მუშაკის შემოწმებაა საჭირო.':'')}
+ const navigate=go;go=function(id){navigate(id);if(id==='privacySettings')load();if(id==='pushDiagnostics')loadSummary()};
+ const rpc=sbRpc;sbRpc=async function(name,args){const r=await rpc(name,args);if(r.ok&&/block_user|unblock_user/.test(name))window.clearFeedSnapshot?.();return r};
+ let signalTimer;window.handleActivitySignal=()=>{clearTimeout(signalTimer);signalTimer=setTimeout(()=>{if(st.phone&&!document.hidden&&window.appNativeActive!==false)window.appPoll?.wake(['direct-chat','group-chat','badges'])},350)};
+ // Only the text draft is stored; selected photo files must be chosen again after restart.
+ const postText=el('newPostText'),draftKey=()=> 'post-draft-v428:'+st.phone;
+ function savePostDraft(){if(!st.phone)return;try{if(postText.value.trim())localStorage.setItem(draftKey(),JSON.stringify({text:postText.value.slice(0,10000),time:Date.now()}));else localStorage.removeItem(draftKey())}catch{}}
+ postText.addEventListener('input',savePostDraft);
+ const openPost=openPostCreator;openPostCreator=function(){if(st.phone&&!postText.value){try{const draft=JSON.parse(localStorage.getItem(draftKey()));if(draft&&Date.now()-draft.time<7*86400000)postText.value=draft.text||''}catch{}}openPost()};
+ const publish=publishRichPost;publishRichPost=async function(){savePostDraft();await publish();savePostDraft()};
+ const draftNote=document.createElement('p');draftNote.className='meta';draftNote.textContent='ტექსტის მონახაზი ამ ტელეფონში ინახება. ფოტოს ხელახლა არჩევა შეიძლება დაგჭირდეს.';postText.after(draftNote);
+ const logout=logoutUser;logoutUser=function(){try{localStorage.removeItem(draftKey())}catch{}postText.value='';owner='';run++;status.textContent='';summary.textContent='';clearTimeout(signalTimer);logout()};
+})();

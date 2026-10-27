@@ -1,0 +1,44 @@
+{
+  "name": "chemi-ubani-mobile",
+  "version": "4.55.0",
+  "private": true,
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start --tunnel",
+    "start:lan": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "doctor": "npx expo-doctor@latest",
+    "sync-html": "node scripts/embed-html.mjs prototype-v4.55.0.html",
+    "build:android:preview": "npx eas-cli@latest build --platform android --profile preview",
+    "build:ios:preview": "npx eas-cli@latest build --platform ios --profile preview",
+    "eas-build-post-install": "node scripts/configure.mjs --check && node scripts/embed-html.mjs prototype-v4.55.0.html && node scripts/verify-release.mjs",
+    "build:ios:testflight": "npx eas-cli@latest build --platform ios --profile ios-testflight",
+    "verify": "node scripts/verify-release.mjs",
+    "test": "node scripts/run-tests.mjs",
+    "check": "npm run sync-html && npm run verify && npm run check:source && npm test",
+    "check:source": "node scripts/check-source.mjs",
+    "configure": "node scripts/configure.mjs"
+  },
+  "dependencies": {
+    "expo": "~57.0.19",
+    "expo-camera": "~57.0.4",
+    "expo-file-system": "~57.0.0",
+    "expo-notifications": "~57.0.17",
+    "react": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-webview": "13.16.1"
+  },
+  "overrides": {
+    "xcode": {
+      "uuid": "11.1.1"
+    }
+  },
+  "description": "Georgian neighborhood community app: Expo native shell, WebView client and Supabase backend.",
+  "engines": {
+    "node": ">=24.3.0 <25"
+  },
+  "devDependencies": {
+    "@babel/parser": "7.29.8"
+  }
+}

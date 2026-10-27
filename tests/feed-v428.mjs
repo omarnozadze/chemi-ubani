@@ -1,0 +1,10 @@
+import fs from 'node:fs';import assert from 'node:assert/strict';const{JSDOM}=await import(process.env.JSDOM_MODULE||'jsdom');
+const dom=new JSDOM('<div id="feed"></div>',{url:'https://test.local',runScripts:'outside-only'}),w=dom.window;w.st={phone:'111',district:'a'};let calls=[],fail=false,pending;
+const data=Array.from({length:25},(_,i)=>({id:String(i),created_at:'2026-09-15T00:00:00Z',content:'item'+i}));
+w.sbRpc=async(n,a)=>{calls.push({n,a});if(pending)return pending;return{ok:!fail,data:a.p_before?data.map(x=>({...x,id:'next'+x.id})):data}};w.renderDistrictFeed=async()=>{w.document.getElementById('feed').textContent=(await w.sbListPostsSocial()).map(x=>x.id).join(',')};w.logoutUser=()=>{w.st.phone=''};w.eval(fs.readFileSync('src/feed-v425.js','utf8'));
+let opened=0;w.openPostCreator=()=>opened++;w.document.getElementById('feedCreatePost').click();assert.equal(opened,1);assert.equal(w.document.querySelector('input[type=search]'),null);
+await w.renderDistrictFeed();assert.equal((await w.sbListPostsSocial()).length,25);assert.ok(w.localStorage.getItem('feed-v428:111'));
+const buttons=[...w.document.querySelectorAll('button.small')];await buttons[1].onclick();assert.equal((await w.sbListPostsSocial()).length,25);assert.equal((await w.sbListPostsSocial())[0].id,'next0');await buttons[0].onclick();assert.equal((await w.sbListPostsSocial())[0].id,'0');
+fail=true;await w.renderDistrictFeed();assert.equal((await w.sbListPostsSocial()).length,25);assert.match(w.document.querySelector('p').textContent,/ბოლოს/);
+w.st.phone='222';await w.renderDistrictFeed();assert.equal((await w.sbListPostsSocial()).length,0,'other account never sees cache');
+w.st.phone='111';fail=false;let resolve;pending=new Promise(r=>resolve=r);const task=w.renderDistrictFeed();await new Promise(r=>setTimeout(r,0));w.logoutUser();resolve({ok:true,data});await task;assert.equal((await w.sbListPostsSocial()).length,0);assert.equal(w.localStorage.getItem('feed-v428:111'),null);dom.window.close();console.log('PASS bounded pages, previous cursor, offline snapshot, account isolation, stale logout response');

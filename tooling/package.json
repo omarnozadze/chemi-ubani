@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "@electric-sql/pglite": "0.5.8",
+    "fake-indexeddb": "6.2.5",
+    "jsdom": "30.0.1"
+  },
+  "name": "chemi-ubani-test-tools",
+  "private": true,
+  "version": "1.0.0"
+}
